@@ -17,6 +17,7 @@ class QNetwork(nn.Module):
         :param seed: torch seed param
         :param fc1_unit: hidden layer units
         :param fc2_unit: hidden layer units
+        :return: None
         """
 
         super(QNetwork, self).__init__()
@@ -25,14 +26,14 @@ class QNetwork(nn.Module):
         self.fc2 = nn.Linear(fc1_unit, fc2_unit)
         self.fc3 = nn.Linear(fc2_unit, action_size)
 
-    def forward(self, q: F.relu) -> F.relu:
+    def forward(self, state: F.relu) -> F.relu:
         """
         Function to forward NN
 
-        :param q: state
+        :param state: state
         :return: result of forward by NN
         """
-        q = F.relu(self.fc1(q))
+        q = F.relu(self.fc1(state))
         q = F.relu(self.fc2(q))
         return self.fc3(q)
 

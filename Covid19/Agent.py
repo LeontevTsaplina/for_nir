@@ -2,22 +2,30 @@ import numpy as np
 import pandas as pd
 import torch
 import torch.optim as optim
+import random
 
 from QNetwork import QNetwork
 from Buffer import Buffer
+
+BATCH_SIZE = 64  # minibatch size
+GAMMA = 0.99  # discount factor
+TAU = 1e-4  # for soft update of target parameters
+LR = 5e-4  # learning rate
 
 
 class Agent:
     """
     Class of an agent
     """
-    def __init__(self, dataset: pd.DataFrame, seed: int) -> None:
+
+    def __init__(self, dataset: pd.DataFrame, seed: int = 0) -> None:
         """
         Function to initialize object of class
 
         :param dataset: input dataset
         :param seed: random seed
         :type dataset: pd.Dataframe
+        :type seed: int
         :return: None
         """
 
@@ -26,48 +34,80 @@ class Agent:
                          len([column for column in dataset.columns if column.endswith('_dinam_fact')]) + \
                          len([column for column in dataset.columns if column.endswith('_stat_fact')])
         self.action_dim = len([column for column in dataset.columns if column.endswith('_dinam_control')])
-        self.seed = seed
 
         self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
         self.qnetwork_local = QNetwork(self.state_dim, self.action_dim, seed).to(self.device)
         self.qnetwork_target = QNetwork(self.state_dim, self.action_dim, seed).to(self.device)
 
-        self.optimizer = optim.Adam(self.qnetwork_local.parameters())
+        self.optimizer = optim.Adam(self.qnetwork_local.parameters(), lr=LR)
 
         self.memory = Buffer(dataset)
         self.t_step = 0
 
-    def action(self, state: np.array) -> np.array:
+    def step(self, index: str, t_point: str, state: np.array, action: np.array,
+             next_step: np.array, reward: float, done: int) -> None:
         """
-        Function returns acting for given state
+        Function of agent step
 
-        :param state: input state
+        :param index: index of episode
+        :param t_point: t_point of episode
+        :param state: state
+        :param action: action
+        :param next_step: next_step
+        :param reward: reward
+        :param done: done
+        :type index: int
+        :type t_point: int
         :type state: np.array
-        :return: acting for given state
+        :type action: np.array
+        :type next_step: np.array
+        :type reward: float
+        :type done: int
+        :return: None
+        """
+
+        self.memory.add(index, t_point, state, action, next_step, reward, done)
+
+        if len(self.memory) > BATCH_SIZE:
+            experience = self.memory.sample()
+            self.learn(experience, GAMMA)
+
+    def action(self, state: np.array, eps: float = 0) -> int or np.array:
+        """
+        Function that returns action for given state
+
+        :param state: state
+        :param eps: epsilon
+        :type state: np.array
+        :type eps: float
+        :return: action for given state
+        :rtype: int or np.array
         """
 
         state = torch.from_numpy(state).float().unsqueeze(0).to(self.device)
-
         self.qnetwork_local.eval()
         with torch.no_grad():
             action_values = self.qnetwork_local(state)
         self.qnetwork_local.train()
 
-        return np.argmax(action_values.cpu().data.numpy())
+        if random.random() > eps:
+            return np.argmax(action_values.cpu().data.numpy())
+        else:
+            return random.choice(np.arange(self.action_dim))
 
     def learn(self, experiences: tuple, gamma: float) -> None:
         """
-        Function that updates value parameters using given batch of experience tuples
+        Function than update value parameters
 
-        :param experiences: tuple of (state, action, next_state, reward, done)
+        :param experiences: tuple of buffer element params
         :param gamma: discount factor
         :type experiences: tuple
         :type gamma: float
         :return: None
         """
 
-        states, actions, rewards, next_state, dones = experiences
+        indexes, states, actions, next_states, rewards, dones = experiences
 
         criterion = torch.nn.MSELoss()
 
@@ -78,7 +118,7 @@ class Agent:
         predicted_targets = self.qnetwork_local(states).gather(1, actions)
 
         with torch.no_grad():
-            labels_next = self.qnetwork_target(next_state).detach().max(1)[0].unsqueeze(1)
+            labels_next = self.qnetwork_target(next_states).detach().max(1)[0].unsqueeze(1)
 
         labels = rewards + (gamma * labels_next * (1 - dones))
 
@@ -87,11 +127,11 @@ class Agent:
         loss.backward()
         self.optimizer.step()
 
-        self.soft_update(self.qnetwork_local, self.qnetwork_target)
+        self.soft_update(self.qnetwork_local, self.qnetwork_target, TAU)
 
-    def soft_update(self, local_model: QNetwork, target_model: QNetwork, tau: float = 0.001) -> None:
+    def soft_update(self, local_model: QNetwork, target_model: QNetwork, tau: float) -> None:
         """
-        Function that soft update model parameters
+        Function of soft update model parameters
 
         :param local_model: weights will be copied from
         :param target_model: weights will be copied to
@@ -102,6 +142,6 @@ class Agent:
         :return: None
         """
 
-        for target_param, local_param in zip(target_model.parameters(), local_model.parameters()):
+        for target_param, local_param in zip(target_model.parameters(),
+                                             local_model.parameters()):
             target_param.data.copy_(tau * local_param.data + (1 - tau) * target_param.data)
-
